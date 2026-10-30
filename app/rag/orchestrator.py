@@ -13,11 +13,13 @@ from app.data.seed_corpus import get_initial_enterprise_corpus
 from app.domain.models import DataClassification, DocumentChunk, RoutingTarget, UserIdentity
 from app.rag.document_processor import EnterpriseDocumentProcessor
 from app.rag.embeddings import LocalHybridSemanticEmbedder
+from app.rag.hallucination_guard import GroundednessAndOutputGuard
 from app.rag.llm_router import HybridLLMRouter
 from app.rag.scoped_cache import ScopedResponseCache
 from app.rag.vector_store import PermissionAwareVectorStore
 from app.security.ad_providers import MockActiveDirectoryProvider
 from app.security.pii_anonymizer import ChileanPresidioPrivacyGuard
+from app.security.rate_limiter import IdentityRateLimiter
 from app.security.rbac_engine import RBACEngine
 
 
@@ -33,6 +35,8 @@ class EnterpriseRAGOrchestrator:
         self.vector_store = PermissionAwareVectorStore(embedder=self.embedder)
         self.privacy_guard = ChileanPresidioPrivacyGuard()
         self.doc_processor = EnterpriseDocumentProcessor(privacy_guard=self.privacy_guard)
+        self.hallucination_guard = GroundednessAndOutputGuard(privacy_guard=self.privacy_guard)
+        self.rate_limiter = IdentityRateLimiter()
         self.anci_monitor = ANCIIncidentAndFinOpsMonitor()
         self.llm_router = HybridLLMRouter(embedding_model_id=self.embedder.model_identifier)
         self.cache = ScopedResponseCache()
@@ -58,8 +62,9 @@ class EnterpriseRAGOrchestrator:
     ) -> dict[str, Any]:
         t0 = time.perf_counter()
 
-        # STAGE 1: Identity & OIDC JWT Verification (Active Directory / Entra ID)
+        # STAGE 1: Identity & OIDC JWT Verification (Active Directory / Entra ID) + Rate Limiting
         user: UserIdentity = self.idp.verify_token_and_resolve_user(token)
+        rate_limit_meta = self.rate_limiter.check_and_consume(user.user_id)
 
         # STAGE 2: Prompt Injection & Unauthorized Probing Inspection
         security_scan = RBACEngine.detect_security_threats(query, user)
@@ -174,7 +179,16 @@ class EnterpriseRAGOrchestrator:
         )
 
         # Rehydrate placeholders (<RUT_CHILENO_1>, etc.) ONLY if user's AD role authorizes raw PII
-        final_answer = self.privacy_guard.rehydrate(llm_raw_output, combined_vault, user)
+        rehydrated_answer = self.privacy_guard.rehydrate(llm_raw_output, combined_vault, user)
+
+        # Verify Groundedness (Anti-Hallucination) & Final Output DLP Guardrail
+        groundedness_report = self.hallucination_guard.verify_and_guard_output(
+            answer_text=rehydrated_answer,
+            allowed_chunks=retrieval.allowed_chunks,
+            tool_invocations=tool_invocations,
+            user=user,
+        )
+        final_answer = groundedness_report["guarded_answer"]
 
         # Prepare chunk cards for UI (respecting PII masking if user lacks `can_view_raw_pii`)
         ui_chunks: list[dict[str, Any]] = []
@@ -257,6 +271,8 @@ class EnterpriseRAGOrchestrator:
             },
             "routing_decision": routing_decision.to_dict(),
             "tool_invocations": tool_dicts,
+            "groundedness_and_citations": groundedness_report,
+            "rate_limit_telemetry": rate_limit_meta,
             "cache_telemetry": cache_meta,
             "audit_receipt": audit_receipt,
             "latency_ms": latency_ms,
