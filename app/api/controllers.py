@@ -132,4 +132,5 @@ class EnterpriseAPIController:
             "recent_audit_logs": self.orchestrator.audit_logger.list_recent_logs(limit=40),
             "vector_collections_inventory": self.orchestrator.vector_store.list_all_chunks_metadata(),
             "scoped_cache_prevented_leaks": self.orchestrator.cache.prevented_cross_role_leaks,
+            "anci_and_finops_governance": self.orchestrator.anci_monitor.get_governance_summary(),
         }

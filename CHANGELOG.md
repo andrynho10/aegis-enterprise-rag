@@ -2,6 +2,16 @@
 
 Todos los cambios relevantes en la evolución arquitectónica de este proyecto están documentados aquí siguiendo [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/) y [Semantic Versioning](https://semver.org/lang/es/).
 
+## [v2.4.0] — Telemetría FinOps/ANCI en Consola Web y Suite de 14 Tests
+### Added
+- Panel en tiempo real de Alertas Tempranas ANCI (Ley 21.663 — SLA 3 horas CSIRT) y métricas FinOps/Zero-Data-Retention en la consola interactiva (`app/web/index.html`, `app/api/controllers.py`).
+- Ampliación de la suite automatizada a **14 pruebas** (`tests/test_enterprise_rag.py`) verificando auto-upgrade DLP de datos sensibles mal etiquetados, chunking semántico multi-sección y alertas ANCI.
+
+## [v2.3.0] — Chunking Semántico con Auto-Clasificación DLP (Ley 21.719) y Monitor ANCI (Ley 21.663)
+### Added
+- Procesador documental con chunking semántico estructurado y clasificador automático DLP (`app/rag/document_processor.py`): eleva automáticamente a `estricto_salud_finanzas` cualquier documento subido por error como `publico` o `interno` si detecta diagnósticos CIE-10, RUTs o datos financieros críticos.
+- Monitor de incidentes bajo **Ley 21.663 Marco de Ciberseguridad (ANCI / CSIRT)** con ventana legal de 3 horas para Servicios Esenciales / OIVs y KPIs FinOps (`app/compliance/anci_incident_monitor.py`).
+
 ## [v2.2.0] — Pipeline CI/CD de Seguridad, Contenedorización y Suite Red-Team (11 Tests)
 ### Added
 - Workflow de integración continua y certificación normativa en GitHub Actions (`.github/workflows/ci-security.yml`).

@@ -33,16 +33,18 @@ Plataforma de **Generación Aumentada por Recuperación y Acción Empresarial (A
    - **Aprobación Humana en Dos Pasos (HITL):** Las mutaciones financieras o clínicas generan propuestas pendientes (`HITL_CONFIRMATION_REQUIRED`) que requieren confirmación explícita del usuario autorizado (`POST /api/v1/rag/actions/confirm`).
    - **Sincronización con Herencia ACL de Active Directory:** Ingesta desde SharePoint, SAP DMS, Buk HCM y ServiceNow heredando el grupo de seguridad AD (`GRP_AD_*`) directamente hacia los metadatos de ChromaDB (`POST /api/v1/connectors/sync`).
 
-6. **Auditoría Inmutable Criptográfica, Derechos ARCO Ley 21.719 y Red-Team Automatizado (`app/compliance/audit_arco.py`, `app/security/redteam_evaluator.py`):**
+6. **Auditoría Inmutable Criptográfica, Derechos ARCO Ley 21.719, DLP y Monitor ANCI Ley 21.663 (`app/compliance/audit_arco.py`, `anci_incident_monitor.py`, `app/rag/document_processor.py`, `app/security/redteam_evaluator.py`):**
    - Registro SQLite encadenado por hash SHA-256 (*tamper-evident*) de quién preguntó qué, qué `chunk_ids` se usaron, cuántos fragmentos de otras áreas fueron bloqueados y qué modelo respondió.
+   - **Auto-Clasificación DLP en Ingesta (Ley 21.719 Art. 16 Safety Net):** Si un documento con diagnósticos CIE-10 o datos financieros se sube por error humano como `publico`, el procesador semántico lo eleva automáticamente a `estricto_salud_finanzas`.
+   - **Monitor de Incidentes ANCI / CSIRT (Ley 21.663 — SLA 3 Horas) y FinOps:** Genera alertas tempranas ante intentos de *Prompt Injection* o uso no autorizado de conectores (`OWASP LLM01 / LLM08`) y mide el ahorro FinOps y el ratio de *Zero-Data-Retention*.
    - Endpoint de **Derecho de Supresión / Olvido (ARCO)** que purga todos los vectores asociados al RUT de un titular.
-   - **Benchmark Red-Team Continuo (`POST /api/v1/compliance/redteam`):** Ejecuta 6 sondas automatizadas de ataque y cumplimiento (Prompt Injection, Fuga PII, Caché Cruzado, Router Local, HITL y Offboarding AD).
+   - **Benchmark Red-Team Continuo (`POST /api/v1/compliance/redteam`):** Ejecuta 6 sondas automatizadas de ataque y cumplimiento.
 
 ---
 
 ## Ejecución Rápida (Zero-Friction)
 
-### 1. Ejecutar la suite de pruebas automatizadas (11 tests de seguridad, HITL, ACL y Red-Team)
+### 1. Ejecutar la suite de pruebas automatizadas (14 tests de seguridad, DLP, HITL, ACL, ANCI y Red-Team)
 ```powershell
 C:\Users\andry\AppData\Local\Programs\Python\Python312\python.exe -m unittest discover -s tests -t . -v
 ```

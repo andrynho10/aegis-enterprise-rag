@@ -474,6 +474,14 @@
         </div>
       </div>
 
+      <!-- LEY 21.663 ANCI CSIRT MONITOR & FINOPS -->
+      <div class="telemetry-card" style="border-color: rgba(56, 189, 248, 0.4);">
+        <h4>Monitor Incidentes ANCI (Ley 21.663) & FinOps</h4>
+        <div id="anciGovernanceBox" style="font-size: 11.5px; color: var(--text-muted);">
+          Cargando métricas de gobernanza...
+        </div>
+      </div>
+
       <!-- IMMUTABLE AUDIT LOG -->
       <div class="telemetry-card" style="flex: 1;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
@@ -754,6 +762,23 @@
       const badge = document.getElementById("auditChainBadge");
       if (data.audit_chain_integrity && data.audit_chain_integrity.intact) {
         badge.textContent = `Cadena Auditoría SHA-256: ÍNTEGRA (${data.audit_chain_integrity.total_records} bloques)`;
+      }
+      if (data.anci_and_finops_governance) {
+        const g = data.anci_and_finops_governance;
+        const k = g.finops_and_privacy_kpis;
+        const anciBox = document.getElementById("anciGovernanceBox");
+        anciBox.innerHTML = `
+          <div><strong>Estado ANCI / CSIRT:</strong> <span class="tag ${g.active_incidents_count > 0 ? 'warn' : 'ok'}">${g.ley_21663_anci_status} (${g.active_incidents_count})</span></div>
+          <div><strong>Ratio Zero-Data-Retention:</strong> <span class="tag ok">${k.zero_data_retention_ratio_pct}%</span> | <strong>Ahorro FinOps:</strong> <code>$${k.estimated_cloud_savings_usd} USD</code></div>
+          <div><strong>PII Enmascarados:</strong> ${k.total_pii_entities_masked} | <strong>Bloqueos RBAC:</strong> ${k.total_chunks_blocked_by_rbac} | <strong>Inyecciones Neutralizadas:</strong> ${k.prompt_injections_neutralized}</div>
+          ${(g.incidents || []).slice(0, 2).map(inc => `
+            <div class="audit-item" style="margin-top:5px; border-color:rgba(245,158,11,0.45);">
+              <div><span class="tag warn">${inc.incident_id}</span> <strong>${inc.owasp_category}</strong></div>
+              <div style="font-size:10.5px; color:#cbd5e1;">Actor: <code>${inc.actor_username}</code> (${inc.actor_department}) — SLA CSIRT: 3h</div>
+              <div style="font-size:10.5px; color:#94a3b8;">${inc.mitigation_applied}</div>
+            </div>
+          `).join("")}
+        `;
       }
       const container = document.getElementById("auditLogsContainer");
       const logs = data.recent_audit_logs || [];
