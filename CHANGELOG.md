@@ -2,6 +2,18 @@
 
 Todos los cambios relevantes en la evolución arquitectónica de este proyecto están documentados aquí siguiendo [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/) y [Semantic Versioning](https://semver.org/lang/es/).
 
+## [v2.2.0] — Pipeline CI/CD de Seguridad, Contenedorización y Suite Red-Team (11 Tests)
+### Added
+- Workflow de integración continua y certificación normativa en GitHub Actions (`.github/workflows/ci-security.yml`).
+- `Dockerfile` con usuario de servicio sin privilegios (`aegis`) siguiendo el principio de mínimo privilegio.
+- Ampliación de la suite automatizada a 11 pruebas de verificación (`tests/test_enterprise_rag.py`) cubriendo flujo *Human-in-the-Loop*, sincronización con herencia ACL y benchmark Red-Team al 100%.
+
+## [v2.1.0] — Gobernanza Human-in-the-Loop (HITL), Sincronización ACL y Evaluador Red-Team
+### Added
+- Flujo de aprobación humana en dos pasos (*Human-in-the-Loop*) para acciones de escritura críticas en Core Seguros, SAP ERP y Buk HCM (`POST /api/v1/rag/actions/confirm`).
+- Conectores de sincronización documental con herencia automática de grupos Active Directory (`GRP_AD_*`) hacia metadatos de ChromaDB (`app/connectors/knowledge_sync.py`, `POST /api/v1/connectors/sync`).
+- Motor automatizado de Red-Teaming y certificación de controles Ley 21.719 / Ley 21.663 con 6 sondas de ataque en tiempo real (`app/security/redteam_evaluator.py`, `POST /api/v1/compliance/redteam`).
+
 ## [v2.0.0] — Consola Interactiva, API REST y Suite de Verificación
 ### Added
 - Controladores REST desacoplados (`app/api/controllers.py`) y adaptador OpenAPI/Swagger con FastAPI (`app/api/fastapi_app.py`).

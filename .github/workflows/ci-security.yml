@@ -1,0 +1,41 @@
+name: AegisRAG Security & Ley 21.719 Compliance CI
+
+on:
+  push:
+    branches: [ "main", "develop" ]
+    tags: [ "v*" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  security-and-compliance-suite:
+    name: RBAC, PII Anonymization & Red-Team Verification (Python 3.12)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run Automated Unit & Integration Test Suite
+        run: python -m unittest discover -s tests -t . -v
+
+      - name: Execute Continuous Red-Team & Ley 21.719 Benchmark
+        run: |
+          python -c "
+          import tempfile
+          from pathlib import Path
+          from app.rag.orchestrator import EnterpriseRAGOrchestrator
+          from app.security.redteam_evaluator import EnterpriseRedTeamEvaluator
+          with tempfile.TemporaryDirectory() as tmp:
+              orch = EnterpriseRAGOrchestrator(audit_db_path=str(Path(tmp) / 'ci_audit.sqlite3'))
+              report = EnterpriseRedTeamEvaluator(orch).run_full_security_suite()
+              print('STATUS:', report['overall_status'], 'SCORE:', report['score_pct'], '%')
+              for p in report['probes']:
+                  print(f'[{p[\"probe_id\"]}] {p[\"control_name\"]}: {\"PASS\" if p[\"passed\"] else \"FAIL\"}')
+              assert report['score_pct'] == 100.0, 'Red-Team Compliance score must be 100%'
+          "

@@ -28,18 +28,21 @@ Plataforma de **Generación Aumentada por Recuperación y Acción Empresarial (A
      - *Consultas confidenciales corporativas:* Enrutadas a **Nube Privada Empresarial** (Azure OpenAI / AWS Bedrock / Vertex AI con contrato *Zero-Data-Retention* sin entrenamiento de modelos).
      - *Consultas generales/públicas:* Enrutadas a API externa **únicamente** después de anonimizar PII.
 
-5. **Conectores Empresariales Accionables (`app/connectors/enterprise_tools.py`):**
+5. **Conectores Empresariales Accionables con Gobernanza *Human-in-the-Loop* (`app/connectors/enterprise_tools.py`, `knowledge_sync.py`):**
    - Capacidad de **leer y accionar** sobre **Core Seguros (Siniestros)**, **SAP S/4HANA ERP (Finanzas)**, **Buk/Workday (RR.HH.)** y **ServiceNow GRC**, validando RBAC de escritura antes de cada ejecución.
+   - **Aprobación Humana en Dos Pasos (HITL):** Las mutaciones financieras o clínicas generan propuestas pendientes (`HITL_CONFIRMATION_REQUIRED`) que requieren confirmación explícita del usuario autorizado (`POST /api/v1/rag/actions/confirm`).
+   - **Sincronización con Herencia ACL de Active Directory:** Ingesta desde SharePoint, SAP DMS, Buk HCM y ServiceNow heredando el grupo de seguridad AD (`GRP_AD_*`) directamente hacia los metadatos de ChromaDB (`POST /api/v1/connectors/sync`).
 
-6. **Auditoría Inmutable Criptográfica & Derechos ARCO Ley 21.719 (`app/compliance/audit_arco.py`):**
+6. **Auditoría Inmutable Criptográfica, Derechos ARCO Ley 21.719 y Red-Team Automatizado (`app/compliance/audit_arco.py`, `app/security/redteam_evaluator.py`):**
    - Registro SQLite encadenado por hash SHA-256 (*tamper-evident*) de quién preguntó qué, qué `chunk_ids` se usaron, cuántos fragmentos de otras áreas fueron bloqueados y qué modelo respondió.
    - Endpoint de **Derecho de Supresión / Olvido (ARCO)** que purga todos los vectores asociados al RUT de un titular.
+   - **Benchmark Red-Team Continuo (`POST /api/v1/compliance/redteam`):** Ejecuta 6 sondas automatizadas de ataque y cumplimiento (Prompt Injection, Fuga PII, Caché Cruzado, Router Local, HITL y Offboarding AD).
 
 ---
 
 ## Ejecución Rápida (Zero-Friction)
 
-### 1. Ejecutar la suite de pruebas automatizadas (7 tests de seguridad y cumplimiento)
+### 1. Ejecutar la suite de pruebas automatizadas (11 tests de seguridad, HITL, ACL y Red-Team)
 ```powershell
 C:\Users\andry\AppData\Local\Programs\Python\Python312\python.exe -m unittest discover -s tests -t . -v
 ```

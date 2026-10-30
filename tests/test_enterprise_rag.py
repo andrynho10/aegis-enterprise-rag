@@ -183,6 +183,73 @@ class TestEnterpriseAgenticRAG(unittest.TestCase):
                 },
             )
 
+    def test_09_human_in_the_loop_two_step_approval(self) -> None:
+        """Verify two-step Human-in-the-Loop (HITL) governance for critical platform write actions."""
+        ctrl = EnterpriseAPIController(orchestrator=self.orchestrator)
+        salud_token = ctrl.login_sso("camila.soto")["access_token"]
+        fin_token = ctrl.login_sso("roberto.mendez")["access_token"]
+
+        # 1. Request claim settlement with `require_hitl=True` -> returns HITL_CONFIRMATION_REQUIRED
+        proposal_res = ctrl.execute_rag_query(
+            token=salud_token,
+            body={
+                "query": "Procede a preliquidar el siniestro SIN-2026-88410 en el Core de Seguros",
+                "require_hitl": True,
+            },
+        )
+        tool_inv = proposal_res["tool_invocations"][0]
+        self.assertEqual(tool_inv["status"], "HITL_CONFIRMATION_REQUIRED")
+        action_id = tool_inv["raw_output"]["action_id"]
+
+        # 2. Unauthorized department (Finance) cannot approve Health's pending HITL action!
+        with self.assertRaises(PermissionError):
+            ctrl.confirm_hitl_action(
+                token=fin_token,
+                body={"action_id": action_id, "decision": "APPROVE"},
+            )
+
+        # 3. Authorized Health specialist approves the pending HITL action -> EXECUTED
+        confirm_res = ctrl.confirm_hitl_action(
+            token=salud_token,
+            body={"action_id": action_id, "decision": "APPROVE"},
+        )
+        self.assertEqual(confirm_res["status"], "EXECUTED")
+
+    def test_10_external_platform_acl_inheritance_sync(self) -> None:
+        """Verify external platform sync inherits Active Directory ACLs and blocks cross-department sync."""
+        ctrl = EnterpriseAPIController(orchestrator=self.orchestrator)
+        salud_token = ctrl.login_sso("camila.soto")["access_token"]
+        ti_token = ctrl.login_sso("matias.silva")["access_token"]
+
+        # IT user cannot sync Medical Committee SharePoint site (`GRP_AD_SALUD_LIQUIDADORES`)
+        with self.assertRaises(PermissionError):
+            ctrl.sync_external_repository(
+                token=ti_token,
+                body={"connector_id": "sharepoint_salud"},
+            )
+
+        # Health user can sync Medical Committee SharePoint site and query the newly indexed document
+        sync_res = ctrl.sync_external_repository(
+            token=salud_token,
+            body={"connector_id": "sharepoint_salud"},
+        )
+        self.assertEqual(sync_res["chunks_indexed"], 1)
+        self.assertEqual(sync_res["inherited_ad_group"], "GRP_AD_SALUD_LIQUIDADORES")
+
+        q_res = ctrl.execute_rag_query(
+            token=salud_token,
+            body={"query": "Consultar cobertura inmunoterapia del siniestro SIN-2026-95301"},
+        )
+        self.assertIn("320 UF", q_res["answer"])
+
+    def test_11_automated_redteam_compliance_benchmark(self) -> None:
+        """Verify that all 6 automated Red-Team security & Ley 21.719 probes pass with 100% score."""
+        ctrl = EnterpriseAPIController(orchestrator=self.orchestrator)
+        report = ctrl.run_redteam_benchmark()
+        self.assertEqual(report["overall_status"], "CERTIFIED_COMPLIANT")
+        self.assertEqual(report["score_pct"], 100.0)
+        self.assertEqual(report["passed_probes"], 6)
+
 
 if __name__ == "__main__":
     unittest.main()
