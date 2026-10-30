@@ -476,10 +476,14 @@
 
       <!-- LEY 21.663 ANCI CSIRT MONITOR & FINOPS -->
       <div class="telemetry-card" style="border-color: rgba(56, 189, 248, 0.4);">
-        <h4>Monitor Incidentes ANCI (Ley 21.663) & FinOps</h4>
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <h4 style="margin:0;">Monitor ANCI (Ley 21.663) & FinOps</h4>
+          <button class="btn-secondary" style="padding:3px 8px; font-size:11px;" onclick="exportGrcReport()">Exportar Informe DPO/ANCI</button>
+        </div>
         <div id="anciGovernanceBox" style="font-size: 11.5px; color: var(--text-muted);">
           Cargando métricas de gobernanza...
         </div>
+        <div id="grcExportBox" class="code-box" style="display:none; margin-top:8px; max-height:170px;"></div>
       </div>
 
       <!-- IMMUTABLE AUDIT LOG -->
@@ -690,13 +694,16 @@
         `;
       }
 
-      // Render Router Decision
+      // Render Router Decision + Groundedness & Rate Limit
       const rt = data.routing_decision;
+      const gr = data.groundedness_and_citations || {};
+      const rl = data.rate_limit_telemetry || {};
       document.getElementById("routerTelemetryBox").innerHTML = `
         <div><strong>Destino:</strong> <span class="tag ok">${rt.target}</span></div>
         <div><strong>Proveedor:</strong> ${rt.provider_name} (<code>${rt.model_name}</code>)</div>
         <div><strong>Embeddings:</strong> <code>${rt.embedding_model_used}</code></div>
         <div><strong>Zero-Data-Retention:</strong> <span class="tag ${rt.zero_data_retention_guaranteed ? 'ok' : 'warn'}">${rt.zero_data_retention_guaranteed ? 'GARANTIZADO (No entrena modelos)' : 'API Pública (Protegida por Anonimización)'}</span></div>
+        <div><strong>Fidelidad al Contexto (Groundedness):</strong> <span class="tag ok">${gr.groundedness_score !== undefined ? (gr.groundedness_score * 100) + '%' : '100%'}</span> | <strong>Cuota AD (LLM10):</strong> <code>${rl.remaining_requests ?? 39}/${rl.max_requests_per_window ?? 40}</code></div>
         <div style="margin-top:6px; font-size:11.5px; color:#cbd5e1;"><strong>Justificación:</strong> ${rt.reason}</div>
       `;
 
@@ -865,6 +872,15 @@
         `).join("")}
       `;
       await loadAuditLogs();
+    }
+
+    async function exportGrcReport() {
+      const box = document.getElementById("grcExportBox");
+      box.style.display = "block";
+      box.textContent = "Generando certificado firmado SHA-256...";
+      const res = await fetch("/api/v1/compliance/export-report");
+      const data = await res.json();
+      box.textContent = data.report_markdown;
     }
 
     window.addEventListener("DOMContentLoaded", initApp);

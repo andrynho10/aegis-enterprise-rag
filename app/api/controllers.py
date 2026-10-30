@@ -5,6 +5,7 @@ import base64
 import json
 from typing import Any
 
+from app.compliance.compliance_exporter import GRCComplianceExporter
 from app.config.settings import settings
 from app.data.seed_corpus import get_initial_enterprise_corpus
 from app.rag.orchestrator import EnterpriseRAGOrchestrator
@@ -134,3 +135,7 @@ class EnterpriseAPIController:
             "scoped_cache_prevented_leaks": self.orchestrator.cache.prevented_cross_role_leaks,
             "anci_and_finops_governance": self.orchestrator.anci_monitor.get_governance_summary(),
         }
+
+    def export_grc_report(self) -> dict[str, Any]:
+        exporter = GRCComplianceExporter(self.orchestrator)
+        return exporter.generate_executive_report()

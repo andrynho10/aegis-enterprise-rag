@@ -314,6 +314,53 @@ class TestEnterpriseAgenticRAG(unittest.TestCase):
         self.assertIn("3 Horas", gov["incidents"][0]["sla_window"])
         self.assertGreaterEqual(gov["finops_and_privacy_kpis"]["prompt_injections_neutralized"], 1)
 
+    def test_15_groundedness_and_citation_verification(self) -> None:
+        """Verify that factual numerical/clinical claims are validated against retrieved evidence."""
+        ctrl = EnterpriseAPIController(orchestrator=self.orchestrator)
+        salud_token = ctrl.login_sso("camila.soto")["access_token"]
+
+        res = ctrl.execute_rag_query(
+            token=salud_token,
+            body={"query": "Consultar cobertura y diagnóstico CIE-10 del siniestro SIN-2026-88410"},
+        )
+        gr = res["groundedness_and_citations"]
+        self.assertTrue(gr["is_fully_grounded"])
+        self.assertGreaterEqual(gr["groundedness_score"], 0.9)
+        self.assertGreaterEqual(len(gr["citations"]), 1)
+
+    def test_16_output_dlp_guardrail_for_unauthorized_role(self) -> None:
+        """Verify that Output DLP scrubs any residual PII for roles with `can_view_raw_pii=False`."""
+        fin_user = self.orchestrator.idp.authenticate_and_issue_token("roberto.mendez")[1]
+        self.assertFalse(fin_user.can_view_raw_pii)
+
+        guard_res = self.orchestrator.hallucination_guard.verify_and_guard_output(
+            answer_text="El titular tiene RUT 15.432.876-5 y cuenta CTA-00984123901.",
+            allowed_chunks=[],
+            tool_invocations=[],
+            user=fin_user,
+        )
+        self.assertTrue(guard_res["output_dlp_scrubbed"])
+        self.assertNotIn("15.432.876-5", guard_res["guarded_answer"])
+        self.assertNotIn("CTA-00984123901", guard_res["guarded_answer"])
+
+    def test_17_identity_sliding_window_rate_limiter_owasp_llm10(self) -> None:
+        """Verify OWASP LLM10 sliding-window rate limiting blocks excessive requests per AD identity."""
+        self.orchestrator.rate_limiter.max_requests_per_window = 2
+        ti_token = self.orchestrator.idp.authenticate_and_issue_token("matias.silva")[0]
+
+        self.orchestrator.process_query(token=ti_token, query="Consulta permitida 1")
+        self.orchestrator.process_query(token=ti_token, query="Consulta permitida 2")
+        with self.assertRaises(PermissionError):
+            self.orchestrator.process_query(token=ti_token, query="Consulta 3 debe ser bloqueada por Rate Limit")
+
+    def test_18_grc_executive_compliance_report_exporter(self) -> None:
+        """Verify GRC compliance report exporter generates SHA-256 signed Markdown and JSON report."""
+        ctrl = EnterpriseAPIController(orchestrator=self.orchestrator)
+        report = ctrl.export_grc_report()
+        self.assertEqual(len(report["report_signature_sha256"]), 64)
+        self.assertIn("Ley 21.719", report["report_markdown"])
+        self.assertIn("Ley 21.663", report["report_markdown"])
+
 
 if __name__ == "__main__":
     unittest.main()

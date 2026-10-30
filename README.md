@@ -44,12 +44,17 @@ Plataforma de **Generación Aumentada por Recuperación y Acción Empresarial (A
 
 ## Ejecución Rápida (Zero-Friction)
 
-### 1. Ejecutar la suite de pruebas automatizadas (14 tests de seguridad, DLP, HITL, ACL, ANCI y Red-Team)
+### 1. Ejecutar la suite de pruebas automatizadas (18 tests de seguridad, DLP, Groundedness, HITL, ACL, ANCI y Red-Team)
 ```powershell
 C:\Users\andry\AppData\Local\Programs\Python\Python312\python.exe -m unittest discover -s tests -t . -v
 ```
 
-### 2. Iniciar el Servidor y Dashboard Web Interactivo
+### 2. Ejecutar la demostración interactiva de los 7 escenarios en terminal
+```powershell
+C:\Users\andry\AppData\Local\Programs\Python\Python312\python.exe demo_cli.py
+```
+
+### 3. Iniciar el Servidor y Dashboard Web Interactivo
 ```powershell
 C:\Users\andry\AppData\Local\Programs\Python\Python312\python.exe run_server.py
 ```

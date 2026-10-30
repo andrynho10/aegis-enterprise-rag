@@ -68,6 +68,9 @@ class EnterpriseHTTPRequestHandler(BaseHTTPRequestHandler):
         if path == "/api/v1/compliance/audit-logs":
             self._send_json(200, CONTROLLER.get_compliance_dashboard())
             return
+        if path == "/api/v1/compliance/export-report":
+            self._send_json(200, CONTROLLER.export_grc_report())
+            return
 
         self._send_json(404, {"detail": f"Ruta '{path}' no encontrada."})
 

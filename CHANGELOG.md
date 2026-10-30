@@ -2,6 +2,17 @@
 
 Todos los cambios relevantes en la evolución arquitectónica de este proyecto están documentados aquí siguiendo [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/) y [Semantic Versioning](https://semver.org/lang/es/).
 
+## [v3.0.0] — Exportador Oficial GRC (DPO/ANCI), Demo CLI Interactiva y Suite de 18 Tests
+### Added
+- Exportador de Informes Ejecutivos de Auditoría y Cumplimiento GRC firmados con SHA-256 en Markdown y JSON (`app/compliance/compliance_exporter.py`, `GET /api/v1/compliance/export-report`).
+- Script de demostración ejecutiva en terminal (`demo_cli.py`) que recorre los 7 escenarios empresariales de extremo a extremo.
+- Ampliación de la suite automatizada a **18 pruebas de verificación** (`tests/test_enterprise_rag.py`).
+
+## [v2.5.0] — Verificador Anti-Alucinación (Groundedness), Output DLP y Rate Limiter OWASP LLM10
+### Added
+- Verificador post-generación de fidelidad al contexto (*Groundedness Score*), extractor de citaciones normativas y filtro DLP de salida (`app/rag/hallucination_guard.py`).
+- Control de cuotas por ventana deslizante por identidad Active Directory (`app/security/rate_limiter.py`) para mitigar *OWASP LLM10: Unbounded Consumption*.
+
 ## [v2.4.0] — Telemetría FinOps/ANCI en Consola Web y Suite de 14 Tests
 ### Added
 - Panel en tiempo real de Alertas Tempranas ANCI (Ley 21.663 — SLA 3 horas CSIRT) y métricas FinOps/Zero-Data-Retention en la consola interactiva (`app/web/index.html`, `app/api/controllers.py`).

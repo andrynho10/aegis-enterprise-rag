@@ -104,4 +104,8 @@ def create_fastapi_app(controller: EnterpriseAPIController | None = None) -> Any
     def audit_logs() -> dict[str, Any]:
         return ctrl.get_compliance_dashboard()
 
+    @app.get("/api/v1/compliance/export-report")
+    def export_report() -> dict[str, Any]:
+        return ctrl.export_grc_report()
+
     return app
