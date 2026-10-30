@@ -5,11 +5,13 @@ import time
 import uuid
 from typing import Any
 
+from app.compliance.anci_incident_monitor import ANCIIncidentAndFinOpsMonitor
 from app.compliance.audit_arco import ImmutableAuditLogger
 from app.connectors.enterprise_tools import EnterpriseConnectorRegistry
 from app.connectors.knowledge_sync import EnterpriseKnowledgeSyncConnector
 from app.data.seed_corpus import get_initial_enterprise_corpus
 from app.domain.models import DataClassification, DocumentChunk, RoutingTarget, UserIdentity
+from app.rag.document_processor import EnterpriseDocumentProcessor
 from app.rag.embeddings import LocalHybridSemanticEmbedder
 from app.rag.llm_router import HybridLLMRouter
 from app.rag.scoped_cache import ScopedResponseCache
@@ -30,6 +32,8 @@ class EnterpriseRAGOrchestrator:
         self.embedder = LocalHybridSemanticEmbedder()
         self.vector_store = PermissionAwareVectorStore(embedder=self.embedder)
         self.privacy_guard = ChileanPresidioPrivacyGuard()
+        self.doc_processor = EnterpriseDocumentProcessor(privacy_guard=self.privacy_guard)
+        self.anci_monitor = ANCIIncidentAndFinOpsMonitor()
         self.llm_router = HybridLLMRouter(embedding_model_id=self.embedder.model_identifier)
         self.cache = ScopedResponseCache()
         self.connectors = EnterpriseConnectorRegistry()
@@ -88,6 +92,16 @@ class EnterpriseRAGOrchestrator:
                 result_copy["cache_telemetry"] = cache_meta
                 result_copy["audit_receipt"] = audit_receipt
                 result_copy["latency_ms"] = latency_ms
+                self.anci_monitor.record_pipeline_telemetry(
+                    username=user.username,
+                    department=user.primary_department,
+                    routing_target=cached_payload["routing_decision"]["target"],
+                    cache_hit=True,
+                    pii_masked_count=cached_payload["privacy_telemetry"]["total_pii_entities_detected"],
+                    blocked_chunks_count=cached_payload["retrieval_telemetry"]["blocked_by_rbac_count"],
+                    security_scan=security_scan,
+                    tool_invocations=[],
+                )
                 return result_copy
         else:
             _, cache_meta = self.cache.lookup(query, user, routing_mode=routing_mode)
@@ -194,10 +208,23 @@ class EnterpriseRAGOrchestrator:
             cache_status=f"MISS ({cache_meta['cache_key']})",
         )
 
+        tool_dicts = [t.to_dict() for t in tool_invocations]
+        anci_alerts = self.anci_monitor.record_pipeline_telemetry(
+            username=user.username,
+            department=user.primary_department,
+            routing_target=routing_decision.target.value,
+            cache_hit=False,
+            pii_masked_count=len(combined_pii_summary.entities),
+            blocked_chunks_count=retrieval.blocked_by_rbac_count,
+            security_scan=security_scan,
+            tool_invocations=tool_dicts,
+        )
+
         response_payload: dict[str, Any] = {
             "answer": final_answer,
             "user_context": user.to_dict(),
             "security_scan": security_scan,
+            "anci_ley21663_alerts": anci_alerts,
             "retrieval_telemetry": {
                 "applied_where_filter": retrieval.applied_where_filter,
                 "collections_searched": retrieval.collections_searched,
@@ -229,7 +256,7 @@ class EnterpriseRAGOrchestrator:
                 "has_sensitive_art16_ley21719": has_sensitive_art16,
             },
             "routing_decision": routing_decision.to_dict(),
-            "tool_invocations": [t.to_dict() for t in tool_invocations],
+            "tool_invocations": tool_dicts,
             "cache_telemetry": cache_meta,
             "audit_receipt": audit_receipt,
             "latency_ms": latency_ms,
@@ -256,44 +283,47 @@ class EnterpriseRAGOrchestrator:
                 f"RBAC Denegado: Tu usuario ({user.primary_department}) no puede indexar documentos en el departamento '{department}'."
             )
 
-        pii_check = self.privacy_guard.anonymize(content)
-        chunk_id = f"CHK-{department[:4].upper()}-{uuid.uuid4().hex[:5].upper()}"
-        chunk = DocumentChunk(
-            chunk_id=chunk_id,
-            document_id=f"DOC-{uuid.uuid4().hex[:6].upper()}",
+        requested_class = classification or DataClassification.CONFIDENCIAL.value
+        chunks, proc_summary = self.doc_processor.process_document_into_chunks(
             title=title,
             content=content,
             department=department,
-            classification=classification or DataClassification.CONFIDENCIAL.value,
-            allowed_roles=[],
+            requested_classification=requested_class,
             source_system=source_system,
-            titular_rut=titular_rut,
-            contains_pii=len(pii_check.entities) > 0,
-            created_at="2026-10-28",
+            explicit_titular_rut=titular_rut,
         )
-        self.vector_store.upsert_chunks([chunk])
+        self.vector_store.upsert_chunks(chunks)
         self.cache.invalidate_all()
 
         audit_receipt = self.audit_logger.log_interaction(
-            event_type="DOCUMENT_INGESTION_LOCAL_EMBEDDING",
+            event_type="DOCUMENT_INGESTION_DLP_AUTO_CLASSIFY",
             username=user.username,
             user_department=user.primary_department,
             ad_groups=user.ad_groups,
-            query_masked=f"Ingesta documento '{title}' en colección '{department}'",
-            where_filter={"department": department, "classification": classification},
-            allowed_chunk_ids=[chunk_id],
+            query_masked=(
+                f"Ingesta inteligente '{title}' en '{department}' "
+                f"({proc_summary['total_chunks_created']} chunks, {proc_summary['dlp_auto_upgrades_count']} DLP upgrades)"
+            ),
+            where_filter={
+                "department": department,
+                "requested_classification": requested_class,
+                "final_classifications": proc_summary["final_classifications"],
+            },
+            allowed_chunk_ids=proc_summary["chunk_ids"],
             blocked_chunks_count=0,
-            pii_masked_count=len(pii_check.entities),
-            routing_target="LOCAL_EMBEDDING_INDEXER",
+            pii_masked_count=proc_summary["total_pii_entities_detected"],
+            routing_target="LOCAL_EMBEDDING_DLP_INDEXER",
             tool_invocations=[],
             security_risk_level="BAJO",
             cache_status="CACHE_INVALIDATED",
         )
         return {
             "status": "INDEXED",
-            "chunk": chunk.to_dict(include_embedding=False),
+            "chunk": chunks[0].to_dict(include_embedding=False) if chunks else {},
+            "chunks_created": [c.to_dict(include_embedding=False) for c in chunks],
+            "dlp_processing_summary": proc_summary,
             "embedding_model": self.embedder.model_identifier,
-            "pii_detected_on_ingest": len(pii_check.entities),
+            "pii_detected_on_ingest": proc_summary["total_pii_entities_detected"],
             "audit_receipt": audit_receipt,
         }
 
