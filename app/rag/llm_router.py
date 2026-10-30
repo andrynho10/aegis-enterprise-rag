@@ -211,7 +211,12 @@ class HybridLLMRouter(LLMRouterPort):
         if tool_results:
             action_lines = ["### Acciones en Plataformas Integradas (Conectores Empresariales)"]
             for t in tool_results:
-                badge = "EJECUTADO" if t.status == "EXECUTED" else "BLOQUEADO POR RBAC"
+                if t.status == "EXECUTED":
+                    badge = "EJECUTADO"
+                elif t.status == "HITL_CONFIRMATION_REQUIRED":
+                    badge = "PENDIENTE CONFIRMACIÓN HUMANA (HITL)"
+                else:
+                    badge = "BLOQUEADO POR RBAC"
                 action_lines.append(f"- **[{badge}] {t.connector_system} (`{t.tool_name}`):** {t.result_summary}")
             sections.append("\n".join(action_lines))
 

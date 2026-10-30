@@ -63,6 +63,7 @@ class EnterpriseConnectorRegistry:
             },
         }
         self._tickets_created: list[dict[str, Any]] = []
+        self._pending_hitl_actions: dict[str, dict[str, Any]] = {}
 
     def list_available_connectors(self) -> list[dict[str, Any]]:
         return [
@@ -102,9 +103,11 @@ class EnterpriseConnectorRegistry:
         user: UserIdentity,
         explicit_tool: str | None = None,
         explicit_params: dict[str, Any] | None = None,
+        require_hitl: bool = False,
     ) -> list[ToolInvocation]:
         """
         Inspect query or explicit tool request, enforce RBAC, and execute integrated platform actions.
+        When `require_hitl=True`, write operations generate a pending Human-in-the-Loop proposal.
         """
         invocations: list[ToolInvocation] = []
         q_lower = query.lower()
@@ -130,7 +133,7 @@ class EnterpriseConnectorRegistry:
                 (explicit_params or {}).get("siniestro_id")
                 or (sin_match.group(0).upper() if sin_match else "SIN-2026-88410")
             )
-            invocations.append(self._exec_preliquidar_siniestro(user, str(sin_id)))
+            invocations.append(self._exec_preliquidar_siniestro(user, str(sin_id), require_hitl=require_hitl))
 
         # 2. Check if user is asking to block/hold a financial invoice in ERP
         wants_erp_action = (
@@ -152,7 +155,7 @@ class EnterpriseConnectorRegistry:
                 (explicit_params or {}).get("factura_id")
                 or (fac_match.group(0).upper() if fac_match else "FAC-99201")
             )
-            invocations.append(self._exec_retener_factura(user, str(fac_id)))
+            invocations.append(self._exec_retener_factura(user, str(fac_id), require_hitl=require_hitl))
 
         # 3. Check if user wants an HR compensation action
         wants_hr_action = (
@@ -168,7 +171,7 @@ class EnterpriseConnectorRegistry:
             )
         )
         if wants_hr_action:
-            invocations.append(self._exec_rrhh_action(user, explicit_params or {}))
+            invocations.append(self._exec_rrhh_action(user, explicit_params or {}, require_hitl=require_hitl))
 
         # 4. Check if user wants to create a compliance/security ticket in ServiceNow
         wants_ticket = (
@@ -189,7 +192,82 @@ class EnterpriseConnectorRegistry:
 
         return invocations
 
-    def _exec_preliquidar_siniestro(self, user: UserIdentity, siniestro_id: str) -> ToolInvocation:
+    def _create_hitl_proposal(
+        self,
+        tool_name: str,
+        connector_system: str,
+        required_department: str,
+        parameters: dict[str, Any],
+        user: UserIdentity,
+        impact_description: str,
+    ) -> ToolInvocation:
+        action_id = f"HITL-{uuid.uuid4().hex[:8].upper()}"
+        proposal = {
+            "action_id": action_id,
+            "tool_name": tool_name,
+            "connector_system": connector_system,
+            "required_department": required_department,
+            "parameters": parameters,
+            "requested_by": user.username,
+            "requested_by_email": user.email,
+            "impact_description": impact_description,
+            "status": "PENDING_HUMAN_APPROVAL",
+            "created_at_epoch": int(time.time()),
+        }
+        self._pending_hitl_actions[action_id] = proposal
+        return ToolInvocation(
+            tool_name=tool_name,
+            connector_system=connector_system,
+            action_type="WRITE",
+            status="HITL_CONFIRMATION_REQUIRED",
+            required_department=required_department,
+            parameters=parameters,
+            result_summary=(
+                f"CONFIRMACIÓN HUMANA REQUERIDA ({action_id}): {impact_description}. "
+                f"Esperando aprobación explícita de {user.full_name} antes de mutar el sistema."
+            ),
+            raw_output=proposal,
+        )
+
+    def confirm_pending_action(
+        self,
+        action_id: str,
+        user: UserIdentity,
+        decision: str = "APPROVE",
+    ) -> ToolInvocation:
+        proposal = self._pending_hitl_actions.get(action_id)
+        if not proposal:
+            raise ValueError(f"La propuesta HITL '{action_id}' no existe o ya fue procesada.")
+
+        req_dept = proposal["required_department"]
+        if req_dept not in user.allowed_departments or not user.can_execute_write_actions:
+            raise PermissionError(
+                f"RBAC Denegado en Confirmación HITL: El usuario '{user.username}' no tiene privilegios "
+                f"de escritura en '{req_dept}' para aprobar la acción '{action_id}'."
+            )
+
+        del self._pending_hitl_actions[action_id]
+        if decision.upper() != "APPROVE":
+            return ToolInvocation(
+                tool_name=proposal["tool_name"],
+                connector_system=proposal["connector_system"],
+                action_type="WRITE",
+                status="REJECTED_BY_HUMAN",
+                required_department=req_dept,
+                parameters=proposal["parameters"],
+                result_summary=f"Acción {action_id} cancelada manualmente por {user.full_name} (Human-in-the-Loop).",
+                raw_output={"action_id": action_id, "decision": "REJECTED"},
+            )
+
+        tool_name = proposal["tool_name"]
+        params = proposal["parameters"]
+        if tool_name == "core_seguros_preliquidar_siniestro":
+            return self._exec_preliquidar_siniestro(user, str(params.get("siniestro_id", "SIN-2026-88410")), require_hitl=False)
+        if tool_name == "erp_finanzas_retener_factura":
+            return self._exec_retener_factura(user, str(params.get("factura_id", "FAC-99201")), require_hitl=False)
+        return self._exec_rrhh_action(user, params, require_hitl=False)
+
+    def _exec_preliquidar_siniestro(self, user: UserIdentity, siniestro_id: str, require_hitl: bool = False) -> ToolInvocation:
         req_dept = "salud_siniestros"
         if req_dept not in user.allowed_departments or not user.can_execute_write_actions:
             return ToolInvocation(
@@ -217,6 +295,19 @@ class EnterpriseConnectorRegistry:
                 result_summary=f"El siniestro {siniestro_id} no fue encontrado en el Core de Seguros.",
             )
 
+        if require_hitl:
+            return self._create_hitl_proposal(
+                tool_name="core_seguros_preliquidar_siniestro",
+                connector_system="Core Seguros & Salud (API Siniestros)",
+                required_department=req_dept,
+                parameters={"siniestro_id": siniestro_id, "cobertura_pct": claim["cobertura_plan_pct"]},
+                user=user,
+                impact_description=(
+                    f"Pre-liquidar siniestro {siniestro_id} (Póliza {claim['poliza']}) con desembolso de "
+                    f"{claim['monto_reembolsable_uf']} UF"
+                ),
+            )
+
         claim["estado"] = "PRELIQUIDADO_APROBADO_PAGO"
         orden_id = f"ORD-LIQ-{int(time.time()) % 100000}"
         return ToolInvocation(
@@ -234,7 +325,7 @@ class EnterpriseConnectorRegistry:
             raw_output={"orden_liquidacion": orden_id, "claim": claim},
         )
 
-    def _exec_retener_factura(self, user: UserIdentity, factura_id: str) -> ToolInvocation:
+    def _exec_retener_factura(self, user: UserIdentity, factura_id: str, require_hitl: bool = False) -> ToolInvocation:
         req_dept = "finanzas"
         if req_dept not in user.allowed_departments or not user.can_execute_write_actions:
             return ToolInvocation(
@@ -262,6 +353,19 @@ class EnterpriseConnectorRegistry:
                 result_summary=f"Factura {factura_id} no existe en el libro mayor de SAP.",
             )
 
+        if require_hitl:
+            return self._create_hitl_proposal(
+                tool_name="erp_finanzas_retener_factura",
+                connector_system="SAP S/4HANA ERP Financiero",
+                required_department=req_dept,
+                parameters={"factura_id": factura_id},
+                user=user,
+                impact_description=(
+                    f"Retener pago en SAP de factura {factura_id} ({invoice['proveedor']}) por "
+                    f"${invoice['monto_clp']:,} CLP"
+                ),
+            )
+
         invoice["estado_pago"] = "RETENIDO_AUDITORIA_FINANZAS"
         return ToolInvocation(
             tool_name="erp_finanzas_retener_factura",
@@ -277,7 +381,7 @@ class EnterpriseConnectorRegistry:
             raw_output={"invoice": invoice},
         )
 
-    def _exec_rrhh_action(self, user: UserIdentity, params: dict[str, Any]) -> ToolInvocation:
+    def _exec_rrhh_action(self, user: UserIdentity, params: dict[str, Any], require_hitl: bool = False) -> ToolInvocation:
         req_dept = "rrhh"
         if req_dept not in user.allowed_departments or not user.can_execute_write_actions:
             return ToolInvocation(
@@ -291,6 +395,16 @@ class EnterpriseConnectorRegistry:
                     f"ACCESO DENEGADO A BUK RR.HH.: El usuario '{user.username}' ({user.primary_department}) "
                     "no tiene permisos sobre remuneraciones ni fichas de personal."
                 ),
+            )
+
+        if require_hitl:
+            return self._create_hitl_proposal(
+                tool_name="buk_rrhh_emitir_certificado_compensacion",
+                connector_system="Buk / Workday HCM (Recursos Humanos)",
+                required_department=req_dept,
+                parameters=params,
+                user=user,
+                impact_description="Emitir certificado oficial de compensación y banda salarial en Buk HCM",
             )
 
         cert_id = f"CERT-BUK-{uuid.uuid4().hex[:6].upper()}"

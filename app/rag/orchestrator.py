@@ -7,6 +7,7 @@ from typing import Any
 
 from app.compliance.audit_arco import ImmutableAuditLogger
 from app.connectors.enterprise_tools import EnterpriseConnectorRegistry
+from app.connectors.knowledge_sync import EnterpriseKnowledgeSyncConnector
 from app.data.seed_corpus import get_initial_enterprise_corpus
 from app.domain.models import DataClassification, DocumentChunk, RoutingTarget, UserIdentity
 from app.rag.embeddings import LocalHybridSemanticEmbedder
@@ -32,6 +33,10 @@ class EnterpriseRAGOrchestrator:
         self.llm_router = HybridLLMRouter(embedding_model_id=self.embedder.model_identifier)
         self.cache = ScopedResponseCache()
         self.connectors = EnterpriseConnectorRegistry()
+        self.knowledge_sync = EnterpriseKnowledgeSyncConnector(
+            vector_store=self.vector_store,
+            privacy_guard=self.privacy_guard,
+        )
         self.audit_logger = ImmutableAuditLogger(db_path=audit_db_path) if audit_db_path else ImmutableAuditLogger()
 
         # Seed initial corporate knowledge base across departmental collections
@@ -45,6 +50,7 @@ class EnterpriseRAGOrchestrator:
         explicit_tool: str | None = None,
         explicit_tool_params: dict[str, Any] | None = None,
         bypass_cache: bool = False,
+        require_hitl: bool = False,
     ) -> dict[str, Any]:
         t0 = time.perf_counter()
 
@@ -127,6 +133,7 @@ class EnterpriseRAGOrchestrator:
             user=user,
             explicit_tool=explicit_tool,
             explicit_params=explicit_tool_params,
+            require_hitl=require_hitl,
         )
 
         # STAGE 8: Grounded Generation + Conditional PII Rehydration
@@ -331,3 +338,52 @@ class EnterpriseRAGOrchestrator:
             "executed_by": user.email,
             "audit_receipt": audit_receipt,
         }
+
+    def confirm_hitl_action(self, token: str, action_id: str, decision: str = "APPROVE") -> dict[str, Any]:
+        """Confirm or reject a pending Human-in-the-Loop write action and record an immutable audit block."""
+        user = self.idp.verify_token_and_resolve_user(token)
+        invocation = self.connectors.confirm_pending_action(action_id=action_id, user=user, decision=decision)
+        audit_receipt = self.audit_logger.log_interaction(
+            event_type=f"HITL_ACTION_{decision.upper()}",
+            username=user.username,
+            user_department=user.primary_department,
+            ad_groups=user.ad_groups,
+            query_masked=f"Confirmación HITL {action_id} ({decision.upper()}) sobre {invocation.tool_name}",
+            where_filter={"required_department": invocation.required_department},
+            allowed_chunk_ids=[],
+            blocked_chunks_count=0,
+            pii_masked_count=0,
+            routing_target="ENTERPRISE_CONNECTOR_HITL_GATEWAY",
+            tool_invocations=[invocation.to_dict()],
+            security_risk_level="BAJO",
+            cache_status="BYPASSED_WRITE_OPERATION",
+        )
+        return {
+            "status": invocation.status,
+            "invocation": invocation.to_dict(),
+            "confirmed_by": user.email,
+            "audit_receipt": audit_receipt,
+        }
+
+    def sync_external_repository(self, token: str, connector_id: str) -> dict[str, Any]:
+        """Synchronize an external enterprise platform repository inheriting Active Directory ACLs."""
+        user = self.idp.verify_token_and_resolve_user(token)
+        sync_result = self.knowledge_sync.sync_platform_source(connector_id=connector_id, user=user)
+        self.cache.invalidate_all()
+        audit_receipt = self.audit_logger.log_interaction(
+            event_type="EXTERNAL_PLATFORM_ACL_SYNC",
+            username=user.username,
+            user_department=user.primary_department,
+            ad_groups=user.ad_groups,
+            query_masked=f"Sincronización ACL desde '{sync_result['platform_name']}' ({sync_result['inherited_ad_group']})",
+            where_filter={"department": sync_result["mapped_department"], "classification": sync_result["mapped_classification"]},
+            allowed_chunk_ids=sync_result["chunk_ids"],
+            blocked_chunks_count=0,
+            pii_masked_count=sync_result["pii_entities_cataloged_locally"],
+            routing_target="LOCAL_EMBEDDING_ACL_SYNC",
+            tool_invocations=[],
+            security_risk_level="BAJO",
+            cache_status="CACHE_INVALIDATED",
+        )
+        sync_result["audit_receipt"] = audit_receipt
+        return sync_result
