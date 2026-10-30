@@ -105,6 +105,23 @@ class EnterpriseHTTPRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(200, res)
                 return
 
+            if path == "/api/v1/rag/actions/confirm":
+                token = self._extract_bearer_token()
+                res = CONTROLLER.confirm_hitl_action(token=token, body=body)
+                self._send_json(200, res)
+                return
+
+            if path == "/api/v1/connectors/sync":
+                token = self._extract_bearer_token()
+                res = CONTROLLER.sync_external_repository(token=token, body=body)
+                self._send_json(200, res)
+                return
+
+            if path == "/api/v1/compliance/redteam":
+                res = CONTROLLER.run_redteam_benchmark()
+                self._send_json(200, res)
+                return
+
             self._send_json(404, {"detail": f"Endpoint POST '{path}' no encontrado."})
         except PermissionError as exc:
             self._send_json(403, {"detail": str(exc)})

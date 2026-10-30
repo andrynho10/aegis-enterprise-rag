@@ -78,6 +78,28 @@ def create_fastapi_app(controller: EnterpriseAPIController | None = None) -> Any
     def reset_corpus() -> dict[str, Any]:
         return ctrl.reset_seed_corpus()
 
+    @app.post("/api/v1/rag/actions/confirm")
+    def confirm_hitl(body: dict[str, Any], token: str = Depends(extract_bearer_token)) -> dict[str, Any]:
+        try:
+            return ctrl.confirm_hitl_action(token=token, body=body)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/v1/connectors/sync")
+    def sync_connector(body: dict[str, Any], token: str = Depends(extract_bearer_token)) -> dict[str, Any]:
+        try:
+            return ctrl.sync_external_repository(token=token, body=body)
+        except PermissionError as exc:
+            raise HTTPException(status_code=403, detail=str(exc)) from exc
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    @app.post("/api/v1/compliance/redteam")
+    def run_redteam() -> dict[str, Any]:
+        return ctrl.run_redteam_benchmark()
+
     @app.get("/api/v1/compliance/audit-logs")
     def audit_logs() -> dict[str, Any]:
         return ctrl.get_compliance_dashboard()

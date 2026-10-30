@@ -316,6 +316,23 @@
         <h4>Token OIDC / JWT Decodificado (MSAL / Entra ID)</h4>
         <div id="jwtInspectorBox" class="code-box">{}</div>
       </div>
+
+      <div class="telemetry-card">
+        <h4>Sincronizar Plataformas (Herencia ACL Active Directory)</h4>
+        <p style="font-size: 11px; color: var(--text-muted); margin-bottom: 6px;">
+          Conecta repositorios corporativos heredando automáticamente el grupo AD hacia los metadatos de ChromaDB:
+        </p>
+        <div style="display:flex; gap:6px; margin-bottom:6px;">
+          <select id="syncSourceSelect">
+            <option value="sharepoint_salud">SharePoint Comité Médico (GRP_AD_SALUD_LIQUIDADORES)</option>
+            <option value="sap_dms_finanzas">SAP DMS Contraloría (GRP_AD_FINANZAS_ANALISTAS)</option>
+            <option value="buk_hcm_rrhh">Buk HCM Compensaciones (GRP_AD_RRHH_GESTION)</option>
+            <option value="servicenow_grc_legal">ServiceNow GRC Legal (GRP_AD_LEGAL_CUMPLIMIENTO)</option>
+          </select>
+          <button class="btn-secondary" onclick="syncPlatformRepository()">Sincronizar</button>
+        </div>
+        <div id="syncStatusBox" style="font-size: 11.5px; color: var(--text-muted);"></div>
+      </div>
     </div>
 
     <!-- CENTER COLUMN: AGENTIC RAG WORKSPACE, SCENARIOS & RESULTS -->
@@ -375,10 +392,17 @@
           </select>
         </div>
         <div style="display:flex; gap:8px; align-items:flex-end; padding-top: 14px;">
+          <label style="font-size: 11.5px; display:flex; align-items:center; gap:5px; cursor:pointer; color:#cbd5e1; margin-right:6px;">
+            <input type="checkbox" id="requireHitlCheckbox" checked style="width:auto;" />
+            Confirmación Humana (HITL) en escritura
+          </label>
           <button class="btn-primary" onclick="executeQuery(false)">Consultar / Accionar RAG</button>
           <button class="btn-secondary" onclick="executeQuery(true)" title="Ignorar caché para medir ejecución fresca">Sin Caché</button>
         </div>
       </div>
+
+      <!-- HITL PENDING ACTION BANNER -->
+      <div id="hitlApprovalBox" style="display:none; background: rgba(245, 158, 11, 0.14); border: 1px solid var(--warning); border-radius: 8px; padding: 12px;"></div>
 
       <!-- RESPONSE AREA -->
       <div>
@@ -437,6 +461,17 @@
           <button class="btn-secondary" onclick="resetSeedCorpus()" title="Restaurar corpus inicial">Restaurar</button>
         </div>
         <div id="arcoStatusBox" style="font-size: 11.5px; color: var(--text-muted);"></div>
+      </div>
+
+      <!-- RED-TEAM CYBERSECURITY BENCHMARK -->
+      <div class="telemetry-card" style="border-color: rgba(16, 185, 129, 0.4);">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+          <h4 style="color: #6ee7b7; margin:0;">Auditoría Red-Team & Certificación</h4>
+          <button class="btn-secondary" style="padding:4px 10px; font-size:11px; border-color:#10b981; color:#6ee7b7;" onclick="runRedTeamBenchmark()">Ejecutar 6 Pruebas</button>
+        </div>
+        <div id="redteamResultsBox" style="font-size: 11.5px; color: var(--text-muted);">
+          Ejecuta las 6 sondas automatizadas de ataque (Prompt Injection, Fuga PII, Caché Cruzado, Router Local, HITL y Offboarding AD).
+        </div>
       </div>
 
       <!-- IMMUTABLE AUDIT LOG -->
@@ -558,7 +593,10 @@
       const query = document.getElementById("queryInput").value.trim();
       if (!query) return;
       const routingMode = document.getElementById("routingModeSelect").value;
+      const requireHitl = document.getElementById("requireHitlCheckbox").checked;
       document.getElementById("latencyBadge").textContent = "Procesando...";
+      const hitlBox = document.getElementById("hitlApprovalBox");
+      hitlBox.style.display = "none";
 
       const res = await fetch("/api/v1/rag/query", {
         method: "POST",
@@ -569,7 +607,8 @@
         body: JSON.stringify({
           query,
           routing_mode: routingMode,
-          bypass_cache: bypassCache
+          bypass_cache: bypassCache,
+          require_hitl: requireHitl
         })
       });
       const data = await res.json();
@@ -583,6 +622,22 @@
       document.getElementById("chromaWherePreview").textContent = JSON.stringify(
         data.retrieval_telemetry.applied_where_filter, null, 2
       );
+
+      // Check if any tool invocation requires Human-in-the-Loop approval
+      const pendingHitl = (data.tool_invocations || []).find(t => t.status === "HITL_CONFIRMATION_REQUIRED");
+      if (pendingHitl && pendingHitl.raw_output && pendingHitl.raw_output.action_id) {
+        const actId = pendingHitl.raw_output.action_id;
+        hitlBox.style.display = "block";
+        hitlBox.innerHTML = `
+          <div style="font-size:12.5px; color:#fde68a; margin-bottom:8px;">
+            <strong>Gobernanza Human-in-the-Loop (${actId}):</strong> ${pendingHitl.result_summary}
+          </div>
+          <div style="display:flex; gap:8px;">
+            <button class="btn-primary" style="padding:6px 14px; font-size:12px;" onclick="confirmHitlAction('${actId}', 'APPROVE')">Aprobar y Ejecutar en Plataforma</button>
+            <button class="btn-danger" style="padding:6px 14px; font-size:12px;" onclick="confirmHitlAction('${actId}', 'REJECT')">Rechazar Acción</button>
+          </div>
+        `;
+      }
 
       // Render Allowed Chunks
       const allowedBox = document.getElementById("allowedChunksBox");
@@ -716,6 +771,75 @@
           </div>
         </div>
       `).join("");
+    }
+
+    async function confirmHitlAction(actionId, decision) {
+      const hitlBox = document.getElementById("hitlApprovalBox");
+      const res = await fetch("/api/v1/rag/actions/confirm", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${currentToken}`
+        },
+        body: JSON.stringify({ action_id: actionId, decision: decision })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        hitlBox.innerHTML = `<span class="tag err">Error HITL: ${data.detail || data.error}</span>`;
+        return;
+      }
+      hitlBox.innerHTML = `<span class="tag ok">Confirmación HITL Procesada (${data.status}):</span> ${data.invocation.result_summary}`;
+      document.getElementById("answerContainer").textContent =
+        `[ACCIÓN CONFIRMADA POR HUMANO — ${data.status}]\n${data.invocation.result_summary}\n\n` +
+        document.getElementById("answerContainer").textContent;
+      await loadAuditLogs();
+    }
+
+    async function syncPlatformRepository() {
+      const connectorId = document.getElementById("syncSourceSelect").value;
+      const statusBox = document.getElementById("syncStatusBox");
+      statusBox.textContent = "Sincronizando con validación ACL...";
+      const res = await fetch("/api/v1/connectors/sync", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${currentToken}`
+        },
+        body: JSON.stringify({ connector_id: connectorId })
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        statusBox.innerHTML = `<span class="tag err">${data.detail || data.error}</span>`;
+        return;
+      }
+      statusBox.innerHTML = `
+        <span class="tag ok">Sincronizado (${data.chunks_indexed} chunk)</span>
+        <div>ACL Heredada: <code>${data.inherited_ad_group}</code> → <code>${data.mapped_department}</code></div>
+        <div>IDs: <code>${data.chunk_ids.join(", ")}</code> | PII catalogado local: <strong>${data.pii_entities_cataloged_locally}</strong></div>
+      `;
+      await loadAuditLogs();
+    }
+
+    async function runRedTeamBenchmark() {
+      const box = document.getElementById("redteamResultsBox");
+      box.textContent = "Ejecutando 6 sondas de ataque y cumplimiento...";
+      const res = await fetch("/api/v1/compliance/redteam", { method: "POST" });
+      const data = await res.json();
+      box.innerHTML = `
+        <div style="margin-bottom:6px;">
+          <span class="tag ok">Score: ${data.score_pct}% (${data.passed_probes}/${data.total_probes} Controles Superados en ${data.elapsed_ms} ms)</span>
+        </div>
+        ${(data.probes || []).map(p => `
+          <div class="audit-item" style="margin-bottom:5px; padding:7px;">
+            <div>
+              <span class="tag ${p.passed ? 'ok' : 'err'}">${p.passed ? 'PASS' : 'FAIL'}</span>
+              <strong>${p.probe_id}: ${p.control_name}</strong>
+            </div>
+            <div style="font-size:10.5px; color:#94a3b8;">Norma: ${p.framework_ref} — ${p.details}</div>
+          </div>
+        `).join("")}
+      `;
+      await loadAuditLogs();
     }
 
     window.addEventListener("DOMContentLoaded", initApp);

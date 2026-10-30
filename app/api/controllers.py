@@ -8,6 +8,7 @@ from typing import Any
 from app.config.settings import settings
 from app.data.seed_corpus import get_initial_enterprise_corpus
 from app.rag.orchestrator import EnterpriseRAGOrchestrator
+from app.security.redteam_evaluator import EnterpriseRedTeamEvaluator
 
 
 class EnterpriseAPIController:
@@ -54,6 +55,7 @@ class EnterpriseAPIController:
             "idp_provider": "Microsoft Entra ID / Active Directory Simulator (OIDC + LDAP Ready)",
             "users": users,
             "connectors": self.orchestrator.connectors.list_available_connectors(),
+            "sync_sources": self.orchestrator.knowledge_sync.list_sync_sources(),
         }
 
     def login_sso(self, username: str) -> dict[str, Any]:
@@ -73,6 +75,7 @@ class EnterpriseAPIController:
         explicit_tool = body.get("explicit_tool")
         explicit_tool_params = body.get("explicit_tool_params")
         bypass_cache = bool(body.get("bypass_cache", False))
+        require_hitl = bool(body.get("require_hitl", False))
         return self.orchestrator.process_query(
             token=token,
             query=query,
@@ -80,7 +83,25 @@ class EnterpriseAPIController:
             explicit_tool=explicit_tool,
             explicit_tool_params=explicit_tool_params,
             bypass_cache=bypass_cache,
+            require_hitl=require_hitl,
         )
+
+    def confirm_hitl_action(self, token: str, body: dict[str, Any]) -> dict[str, Any]:
+        action_id = str(body.get("action_id", "")).strip()
+        if not action_id:
+            raise ValueError("Debe proporcionar 'action_id' para confirmar o rechazar la acción HITL.")
+        decision = str(body.get("decision", "APPROVE")).strip().upper()
+        return self.orchestrator.confirm_hitl_action(token=token, action_id=action_id, decision=decision)
+
+    def sync_external_repository(self, token: str, body: dict[str, Any]) -> dict[str, Any]:
+        connector_id = str(body.get("connector_id", "")).strip()
+        if not connector_id:
+            raise ValueError("Debe proporcionar 'connector_id' para sincronizar el repositorio.")
+        return self.orchestrator.sync_external_repository(token=token, connector_id=connector_id)
+
+    def run_redteam_benchmark(self) -> dict[str, Any]:
+        evaluator = EnterpriseRedTeamEvaluator(self.orchestrator)
+        return evaluator.run_full_security_suite()
 
     def ingest_document(self, token: str, body: dict[str, Any]) -> dict[str, Any]:
         return self.orchestrator.ingest_custom_document(
