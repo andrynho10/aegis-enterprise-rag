@@ -361,6 +361,107 @@ class TestEnterpriseAgenticRAG(unittest.TestCase):
         self.assertIn("Ley 21.719", report["report_markdown"])
         self.assertIn("Ley 21.663", report["report_markdown"])
 
+    def test_19_reciprocal_rank_fusion_and_cross_encoder_reranker(self) -> None:
+        """Verify Two-Stage RRF + Cross-Encoder re-ranking promotes exact identifier matches to #1."""
+        salud_user = self.orchestrator.idp.authenticate_and_issue_token("camila.soto")[1]
+        retrieval = self.orchestrator.vector_store.retrieve_permission_aware(
+            query="¿Qué indica el siniestro SIN-2026-88410 con diagnóstico CIE-10 C50.9?",
+            user=salud_user,
+            top_k=3,
+        )
+        self.assertGreaterEqual(len(retrieval.allowed_chunks), 1)
+        top_chunk = retrieval.allowed_chunks[0]
+        self.assertIn("SIN-2026-88410", top_chunk.content)
+        self.assertGreater(top_chunk.score, 0.35)
+
+    def test_20_mcp_jsonrpc_tools_and_resources_list(self) -> None:
+        """Verify MCP JSON-RPC 2.0 `initialize`, `tools/list`, and RBAC-scoped `resources/list`."""
+        ctrl = EnterpriseAPIController(orchestrator=self.orchestrator)
+        fin_token = ctrl.login_sso("roberto.mendez")["access_token"]
+
+        init_res = ctrl.handle_mcp_rpc(
+            token=fin_token,
+            body={"jsonrpc": "2.0", "id": 1, "method": "initialize", "params": {}},
+        )
+        self.assertEqual(init_res["result"]["serverInfo"]["name"], "aegisrag-enterprise-mcp-server")
+        self.assertEqual(init_res["result"]["rbacSessionContext"]["primary_department"], "finanzas")
+
+        res_list = ctrl.handle_mcp_rpc(
+            token=fin_token,
+            body={"jsonrpc": "2.0", "id": 2, "method": "resources/list", "params": {}},
+        )
+        resources = res_list["result"]["resources"]
+        self.assertGreaterEqual(len(resources), 2)
+        # Finance user must ONLY see `finanzas` and `publico_corporativo` resources in MCP resources/list
+        for r in resources:
+            self.assertIn(r["annotations"]["department"], {"finanzas", "publico_corporativo"})
+            self.assertNotIn(r["annotations"]["department"], {"rrhh", "salud_siniestros"})
+
+    def test_21_mcp_jsonrpc_tool_call_and_resource_read_rbac_enforcement(self) -> None:
+        """Verify MCP `tools/call` and `resources/read` enforce AD RBAC and Ley 21.719 PII masking."""
+        ctrl = EnterpriseAPIController(orchestrator=self.orchestrator)
+        fin_token = ctrl.login_sso("roberto.mendez")["access_token"]
+
+        # 1. Finance user tries to call Health Claims MCP tool -> must be blocked by RBAC (`isError: True`)
+        denied_call = ctrl.handle_mcp_rpc(
+            token=fin_token,
+            body={
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "tools/call",
+                "params": {
+                    "name": "core_seguros_preliquidar_siniestro",
+                    "arguments": {"query": "Preliquidar SIN-2026-88410"},
+                },
+            },
+        )
+        self.assertTrue(denied_call["result"]["isError"])
+        self.assertEqual(denied_call["result"]["structuredOutput"]["status"], "RBAC_DENIED")
+
+        # 2. Finance user calls SAP ERP tool -> authorized!
+        allowed_call = ctrl.handle_mcp_rpc(
+            token=fin_token,
+            body={
+                "jsonrpc": "2.0",
+                "id": 4,
+                "method": "tools/call",
+                "params": {
+                    "name": "erp_finanzas_retener_factura",
+                    "arguments": {"query": "Retener factura FAC-99201 en SAP"},
+                },
+            },
+        )
+        self.assertFalse(allowed_call["result"]["isError"])
+        self.assertEqual(allowed_call["result"]["structuredOutput"]["status"], "EXECUTED")
+
+        # 3. Finance user tries to read an HR resource directly via MCP `resources/read` -> must return error -32003
+        hr_chunks = list(self.orchestrator.vector_store._collections.get("col_rrhh", {}).values())
+        self.assertGreaterEqual(len(hr_chunks), 1)
+        hr_uri = f"aegis://department/rrhh/{hr_chunks[0].chunk_id}"
+        denied_read = ctrl.handle_mcp_rpc(
+            token=fin_token,
+            body={"jsonrpc": "2.0", "id": 5, "method": "resources/read", "params": {"uri": hr_uri}},
+        )
+        self.assertIn("error", denied_read)
+        self.assertEqual(denied_read["error"]["code"], -32003)
+
+    def test_22_ci_github_workflow_and_adr_documentation_integrity(self) -> None:
+        """Verify DevSecOps CI pipeline, Dockerfile, and 5 Architecture Decision Records (ADRs) exist."""
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parent.parent
+        adr_file = root / "docs" / "ARCHITECTURE_DECISIONS_ADR.md"
+        ci_file = root / ".github" / "workflows" / "ci-security.yml"
+        dockerfile = root / "Dockerfile"
+
+        self.assertTrue(adr_file.exists())
+        self.assertTrue(ci_file.exists())
+        self.assertTrue(dockerfile.exists())
+
+        adr_text = adr_file.read_text(encoding="utf-8")
+        for adr_id in ("ADR-001", "ADR-002", "ADR-003", "ADR-004", "ADR-005"):
+            self.assertIn(adr_id, adr_text)
+
 
 if __name__ == "__main__":
     unittest.main()

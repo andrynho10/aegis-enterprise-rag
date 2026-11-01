@@ -28,23 +28,25 @@ Plataforma de **Generación Aumentada por Recuperación y Acción Empresarial (A
      - *Consultas confidenciales corporativas:* Enrutadas a **Nube Privada Empresarial** (Azure OpenAI / AWS Bedrock / Vertex AI con contrato *Zero-Data-Retention* sin entrenamiento de modelos).
      - *Consultas generales/públicas:* Enrutadas a API externa **únicamente** después de anonimizar PII.
 
-5. **Conectores Empresariales Accionables con Gobernanza *Human-in-the-Loop* (`app/connectors/enterprise_tools.py`, `knowledge_sync.py`):**
+5. **Conectores Empresariales Accionables, Protocolo MCP JSON-RPC 2.0 y Gobernanza *Human-in-the-Loop* (`app/connectors/enterprise_tools.py`, `mcp_server_adapter.py`, `knowledge_sync.py`):**
    - Capacidad de **leer y accionar** sobre **Core Seguros (Siniestros)**, **SAP S/4HANA ERP (Finanzas)**, **Buk/Workday (RR.HH.)** y **ServiceNow GRC**, validando RBAC de escritura antes de cada ejecución.
+   - **Servidor Model Context Protocol (MCP) JSON-RPC 2.0 (`POST /api/v1/mcp/rpc`):** Expone `initialize`, `tools/list`, `tools/call`, `resources/list` y `resources/read` filtrando recursos por el alcance RBAC de Active Directory y enmascarando PII según Ley 21.719.
+   - **Re-Ranker de Dos Etapas (`RRF` + Cross-Encoder en `app/rag/reranker.py`):** Combina similitud densa y léxica mediante *Reciprocal Rank Fusion* ($k=60$) con verificación Cross-Encoder de códigos exactos (`RUT`, `CIE-10`, `SIN-*`, `FAC-*`).
    - **Aprobación Humana en Dos Pasos (HITL):** Las mutaciones financieras o clínicas generan propuestas pendientes (`HITL_CONFIRMATION_REQUIRED`) que requieren confirmación explícita del usuario autorizado (`POST /api/v1/rag/actions/confirm`).
    - **Sincronización con Herencia ACL de Active Directory:** Ingesta desde SharePoint, SAP DMS, Buk HCM y ServiceNow heredando el grupo de seguridad AD (`GRP_AD_*`) directamente hacia los metadatos de ChromaDB (`POST /api/v1/connectors/sync`).
 
-6. **Auditoría Inmutable Criptográfica, Derechos ARCO Ley 21.719, DLP y Monitor ANCI Ley 21.663 (`app/compliance/audit_arco.py`, `anci_incident_monitor.py`, `app/rag/document_processor.py`, `app/security/redteam_evaluator.py`):**
+6. **Auditoría Inmutable Criptográfica, Derechos ARCO Ley 21.719, DLP, Monitor ANCI Ley 21.663 y ADRs (`app/compliance/audit_arco.py`, `anci_incident_monitor.py`, `docs/ARCHITECTURE_DECISIONS_ADR.md`):**
    - Registro SQLite encadenado por hash SHA-256 (*tamper-evident*) de quién preguntó qué, qué `chunk_ids` se usaron, cuántos fragmentos de otras áreas fueron bloqueados y qué modelo respondió.
    - **Auto-Clasificación DLP en Ingesta (Ley 21.719 Art. 16 Safety Net):** Si un documento con diagnósticos CIE-10 o datos financieros se sube por error humano como `publico`, el procesador semántico lo eleva automáticamente a `estricto_salud_finanzas`.
    - **Monitor de Incidentes ANCI / CSIRT (Ley 21.663 — SLA 3 Horas) y FinOps:** Genera alertas tempranas ante intentos de *Prompt Injection* o uso no autorizado de conectores (`OWASP LLM01 / LLM08`) y mide el ahorro FinOps y el ratio de *Zero-Data-Retention*.
    - Endpoint de **Derecho de Supresión / Olvido (ARCO)** que purga todos los vectores asociados al RUT de un titular.
-   - **Benchmark Red-Team Continuo (`POST /api/v1/compliance/redteam`):** Ejecuta 6 sondas automatizadas de ataque y cumplimiento.
+   - **Benchmark Red-Team Continuo (`POST /api/v1/compliance/redteam`)** y **5 Architecture Decision Records (`docs/ARCHITECTURE_DECISIONS_ADR.md`)**.
 
 ---
 
 ## Ejecución Rápida (Zero-Friction)
 
-### 1. Ejecutar la suite de pruebas automatizadas (18 tests de seguridad, DLP, Groundedness, HITL, ACL, ANCI y Red-Team)
+### 1. Ejecutar la suite de pruebas automatizadas (22 tests de seguridad, DLP, RRF Re-Ranker, MCP JSON-RPC 2.0, Groundedness, HITL, ACL, ANCI y Red-Team)
 ```powershell
 C:\Users\andry\AppData\Local\Programs\Python\Python312\python.exe -m unittest discover -s tests -t . -v
 ```

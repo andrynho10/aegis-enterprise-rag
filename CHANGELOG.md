@@ -2,6 +2,17 @@
 
 Todos los cambios relevantes en la evolución arquitectónica de este proyecto están documentados aquí siguiendo [Keep a Changelog](https://keepachangelog.com/es-ES/1.0.0/) y [Semantic Versioning](https://semver.org/lang/es/).
 
+## [v3.2.0] — Architecture Decision Records (ADRs), Inspector MCP / DLP en Consola Web y Suite de 22 Tests
+### Added
+- Documentación formal de las 5 **Architecture Decision Records (`ADR-001` a `ADR-005`)** en `docs/ARCHITECTURE_DECISIONS_ADR.md`.
+- Panel interactivo de **Ingesta Documental DLP (Art. 16 Ley 21.719)** e **Inspector MCP JSON-RPC 2.0** en el dashboard web (`app/web/index.html`).
+- Ampliación de la suite automatizada a **22 pruebas de verificación** (`tests/test_enterprise_rag.py`) cubriendo Re-Ranking RRF + Cross-Encoder, protocolo MCP (`initialize`, `tools/list`, `tools/call`, `resources/list`, `resources/read`) con filtrado RBAC y verificación de ADRs/CI.
+
+## [v3.1.0] — Servidor Model Context Protocol (MCP JSON-RPC 2.0) y Re-Ranker RRF + Cross-Encoder
+### Added
+- Adaptador de servidor **Model Context Protocol (MCP) JSON-RPC 2.0** (`app/connectors/mcp_server_adapter.py`, `POST /api/v1/mcp/rpc`) con control de acceso Active Directory RBAC y enmascaramiento PII Ley 21.719 sobre `resources/*` y `tools/*`.
+- Motor de Re-Ranking en dos etapas (`app/rag/reranker.py`) combinando **Reciprocal Rank Fusion (`RRF`, $k=60$)** con **Cross-Encoder de entidades exactas** (`RUT`, `CIE-10`, `SIN-*`, `FAC-*`, `POL-*`) integrado en `app/rag/vector_store.py`.
+
 ## [v3.0.0] — Exportador Oficial GRC (DPO/ANCI), Demo CLI Interactiva y Suite de 18 Tests
 ### Added
 - Exportador de Informes Ejecutivos de Auditoría y Cumplimiento GRC firmados con SHA-256 en Markdown y JSON (`app/compliance/compliance_exporter.py`, `GET /api/v1/compliance/export-report`).

@@ -486,6 +486,17 @@
         <div id="grcExportBox" class="code-box" style="display:none; margin-top:8px; max-height:170px;"></div>
       </div>
 
+      <!-- DLP DOCUMENT INGESTION & MCP JSON-RPC 2.0 INSPECTOR -->
+      <div class="telemetry-card" style="border-color: rgba(245, 158, 11, 0.4);">
+        <h4 style="color: #fcd34d;">Ingesta Documental DLP & Inspector MCP JSON-RPC 2.0</h4>
+        <div style="display:flex; gap:6px; margin-bottom:6px; flex-wrap:wrap;">
+          <button class="btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="testDlpAutoUpgradeIngest()">Probar DLP Auto-Upgrade (Art. 16)</button>
+          <button class="btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="runMcpInspector('resources/list')">MCP: resources/list</button>
+          <button class="btn-secondary" style="padding:4px 8px; font-size:11px;" onclick="runMcpInspector('tools/list')">MCP: tools/list</button>
+        </div>
+        <div id="dlpAndMcpBox" class="code-box" style="max-height:150px;">Selecciona una prueba DLP o método MCP JSON-RPC 2.0...</div>
+      </div>
+
       <!-- IMMUTABLE AUDIT LOG -->
       <div class="telemetry-card" style="flex: 1;">
         <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
@@ -881,6 +892,48 @@
       const res = await fetch("/api/v1/compliance/export-report");
       const data = await res.json();
       box.textContent = data.report_markdown;
+    }
+
+    async function testDlpAutoUpgradeIngest() {
+      const box = document.getElementById("dlpAndMcpBox");
+      box.textContent = "Indexando documento con CIE-10 y RUT bajo clasificación 'publico'...";
+      const dept = (currentUser && currentUser.allowed_departments[0]) || "publico_corporativo";
+      const res = await fetch("/api/v1/rag/ingest", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${currentToken}`
+        },
+        body: JSON.stringify({
+          title: "Epicrisis Médica Ingresada por Error como Pública",
+          content: "Paciente RUT 12.345.678-5 presenta diagnóstico CIE-10 C50.9 y póliza POL-2026-99812.",
+          department: dept,
+          classification: "publico"
+        })
+      });
+      const data = await res.json();
+      box.textContent = JSON.stringify(data.dlp_processing_summary || data, null, 2);
+      await loadAuditLogs();
+    }
+
+    async function runMcpInspector(methodName) {
+      const box = document.getElementById("dlpAndMcpBox");
+      box.textContent = `Invocando MCP JSON-RPC 2.0 (${methodName})...`;
+      const res = await fetch("/api/v1/mcp/rpc", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${currentToken}`
+        },
+        body: JSON.stringify({
+          jsonrpc: "2.0",
+          id: Date.now(),
+          method: methodName,
+          params: {}
+        })
+      });
+      const data = await res.json();
+      box.textContent = JSON.stringify(data, null, 2);
     }
 
     window.addEventListener("DOMContentLoaded", initApp);

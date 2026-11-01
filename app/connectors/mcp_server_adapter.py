@@ -13,6 +13,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from app.security.rbac_engine import RBACEngine
+
 if TYPE_CHECKING:
     from app.rag.orchestrator import EnterpriseRAGOrchestrator
 
@@ -24,7 +26,7 @@ class EnterpriseMCPServerAdapter:
 
     PROTOCOL_VERSION = "2024-11-05"
     SERVER_NAME = "aegisrag-enterprise-mcp-server"
-    SERVER_VERSION = "3.1.0"
+    SERVER_VERSION = "3.2.0"
 
     def __init__(self, orchestrator: EnterpriseRAGOrchestrator) -> None:
         self.orchestrator = orchestrator
@@ -68,7 +70,7 @@ class EnterpriseMCPServerAdapter:
                         "username": user.username,
                         "primary_department": user.primary_department,
                         "allowed_departments": user.allowed_departments,
-                        "allowed_classifications": user.allowed_classifications,
+                        "max_classification": user.max_classification,
                         "can_view_raw_pii": user.can_view_raw_pii,
                     },
                 },
@@ -82,32 +84,28 @@ class EnterpriseMCPServerAdapter:
                 authorized = req_dept in user.allowed_departments
                 mcp_tools.append(
                     {
-                        "name": conn["tool_id"],
+                        "name": conn["tool_name"],
                         "description": (
-                            f"[{conn['platform']}] Acciones soportadas: {', '.join(conn['actions'])}. "
+                            f"[{conn['connector_system']}] {conn['description']} "
                             f"(Requiere grupo AD mapeado al depto '{req_dept}')"
                         ),
                         "inputSchema": {
                             "type": "object",
                             "properties": {
-                                "action": {
-                                    "type": "string",
-                                    "enum": conn["actions"],
-                                    "description": "Operación a ejecutar en la plataforma empresarial.",
-                                },
                                 "query": {
                                     "type": "string",
-                                    "description": "Instrucción o contexto de negocio para el conector.",
+                                    "description": "Instrucción o identificador de negocio (ej. SIN-2026-88410 o FAC-99201).",
                                 },
                                 "require_hitl": {
                                     "type": "boolean",
                                     "description": "Si es true, exige confirmación Human-in-the-Loop para escritura.",
                                 },
                             },
-                            "required": ["action"],
+                            "required": ["query"],
                         },
                         "annotations": {
-                            "platform": conn["platform"],
+                            "connector_system": conn["connector_system"],
+                            "action_type": conn["action_type"],
                             "required_department": req_dept,
                             "authorized_for_current_user": authorized,
                         },
@@ -143,14 +141,14 @@ class EnterpriseMCPServerAdapter:
                 }
 
             inv = invocations[0]
-            is_error = inv.status == "DENIED_RBAC"
+            is_error = inv.status == "RBAC_DENIED"
 
             audit_receipt = self.orchestrator.audit_logger.log_interaction(
                 event_type="MCP_JSONRPC_TOOL_CALL_DENIED" if is_error else "MCP_JSONRPC_TOOL_CALL",
                 username=user.username,
                 user_department=user.primary_department,
                 ad_groups=user.ad_groups,
-                query_masked=f"MCP tools/call '{tool_name}' (action={inv.action})",
+                query_masked=f"MCP tools/call '{tool_name}' (action_type={inv.action_type})",
                 where_filter={"required_department": inv.required_department},
                 allowed_chunk_ids=[],
                 blocked_chunks_count=1 if is_error else 0,
@@ -181,9 +179,10 @@ class EnterpriseMCPServerAdapter:
             # Strictly filter resources by the user's Active Directory RBAC scope!
             authorized_resources: list[dict[str, Any]] = []
             for dept in user.allowed_departments:
-                dept_chunks = self.orchestrator.vector_store._collections.get(dept, [])
-                for ch in dept_chunks:
-                    if ch.classification in user.allowed_classifications:
+                col_name = self.orchestrator.vector_store._collection_name(dept)
+                dept_chunks = self.orchestrator.vector_store._collections.get(col_name, {})
+                for ch in dept_chunks.values():
+                    if RBACEngine.is_chunk_authorized(ch, user):
                         authorized_resources.append(
                             {
                                 "uri": f"aegis://department/{ch.department}/{ch.chunk_id}",
@@ -206,19 +205,15 @@ class EnterpriseMCPServerAdapter:
                 "id": rpc_id,
                 "result": {
                     "resources": authorized_resources,
-                    "rbacFilterApplied": {
-                        "allowed_departments": user.allowed_departments,
-                        "allowed_classifications": user.allowed_classifications,
-                    },
+                    "rbacFilterApplied": RBACEngine.build_chromadb_where_filter(user),
                 },
             }
 
         if method == "resources/read":
             uri = str(params.get("uri", "")).strip()
-            # Expected URI format: aegis://department/{dept}/{chunk_id}
             target_chunk = None
             for dept_chunks in self.orchestrator.vector_store._collections.values():
-                for ch in dept_chunks:
+                for ch in dept_chunks.values():
                     candidate_uri = f"aegis://department/{ch.department}/{ch.chunk_id}"
                     if candidate_uri == uri or ch.chunk_id == uri:
                         target_chunk = ch
@@ -237,10 +232,7 @@ class EnterpriseMCPServerAdapter:
                 }
 
             # Enforce Permission-Aware Access Control on resource read
-            if (
-                target_chunk.department not in user.allowed_departments
-                or target_chunk.classification not in user.allowed_classifications
-            ):
+            if not RBACEngine.is_chunk_authorized(target_chunk, user):
                 self.orchestrator.audit_logger.log_interaction(
                     event_type="MCP_RESOURCE_READ_DENIED_RBAC",
                     username=user.username,
@@ -257,7 +249,7 @@ class EnterpriseMCPServerAdapter:
                     routing_target="MCP_SERVER_JSONRPC_GATEWAY",
                     tool_invocations=[],
                     security_risk_level="ALTO",
-                    cache_status="DENIED_RBAC",
+                    cache_status="RBAC_DENIED",
                 )
                 return {
                     "jsonrpc": jsonrpc_ver,
