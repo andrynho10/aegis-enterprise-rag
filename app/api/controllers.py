@@ -139,3 +139,7 @@ class EnterpriseAPIController:
     def export_grc_report(self) -> dict[str, Any]:
         exporter = GRCComplianceExporter(self.orchestrator)
         return exporter.generate_executive_report()
+
+    def handle_mcp_rpc(self, token: str, body: dict[str, Any]) -> dict[str, Any]:
+        return self.orchestrator.mcp_adapter.handle_jsonrpc(token=token, rpc_request=body)
+

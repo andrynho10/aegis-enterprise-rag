@@ -9,6 +9,7 @@ from app.compliance.anci_incident_monitor import ANCIIncidentAndFinOpsMonitor
 from app.compliance.audit_arco import ImmutableAuditLogger
 from app.connectors.enterprise_tools import EnterpriseConnectorRegistry
 from app.connectors.knowledge_sync import EnterpriseKnowledgeSyncConnector
+from app.connectors.mcp_server_adapter import EnterpriseMCPServerAdapter
 from app.data.seed_corpus import get_initial_enterprise_corpus
 from app.domain.models import DataClassification, DocumentChunk, RoutingTarget, UserIdentity
 from app.rag.document_processor import EnterpriseDocumentProcessor
@@ -45,6 +46,7 @@ class EnterpriseRAGOrchestrator:
             vector_store=self.vector_store,
             privacy_guard=self.privacy_guard,
         )
+        self.mcp_adapter = EnterpriseMCPServerAdapter(self)
         self.audit_logger = ImmutableAuditLogger(db_path=audit_db_path) if audit_db_path else ImmutableAuditLogger()
 
         # Seed initial corporate knowledge base across departmental collections
@@ -246,6 +248,7 @@ class EnterpriseRAGOrchestrator:
                 "allowed_chunks_count": len(retrieval.allowed_chunks),
                 "blocked_by_rbac_count": retrieval.blocked_by_rbac_count,
                 "blocked_departments_preview": retrieval.blocked_departments_preview,
+                "reranker_strategy": "TwoStage_RRF_k60_plus_CrossEncoder_ExactEntity",
             },
             "retrieved_chunks": ui_chunks,
             "privacy_telemetry": {

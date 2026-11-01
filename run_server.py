@@ -125,6 +125,12 @@ class EnterpriseHTTPRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(200, res)
                 return
 
+            if path == "/api/v1/mcp/rpc":
+                token = self._extract_bearer_token()
+                res = CONTROLLER.handle_mcp_rpc(token=token, body=body)
+                self._send_json(200, res)
+                return
+
             self._send_json(404, {"detail": f"Endpoint POST '{path}' no encontrado."})
         except PermissionError as exc:
             self._send_json(403, {"detail": str(exc)})

@@ -8,6 +8,7 @@ from app.config.settings import settings
 from app.domain.models import DocumentChunk, RetrievalResult, UserIdentity
 from app.domain.ports import EmbeddingProviderPort, VectorStorePort
 from app.rag.embeddings import LocalHybridSemanticEmbedder, cosine_similarity
+from app.rag.reranker import EnterpriseCrossEncoderReranker
 from app.security.rbac_engine import RBACEngine
 
 
@@ -16,12 +17,14 @@ class PermissionAwareVectorStore(VectorStorePort):
     Enterprise Vector Store implementing:
     1. Collection-per-Department isolation (`col_<department>`).
     2. Mandatory Pre-Retrieval `where` metadata filtering derived from the user's JWT AD groups.
-    3. Hybrid semantic (local embeddings cosine similarity) + lexical BM25 keyword scoring.
+    3. Hybrid semantic (local embeddings cosine similarity) + lexical BM25 keyword scoring
+       followed by Two-Stage Reciprocal Rank Fusion (RRF) & Cross-Encoder Re-Ranking.
     4. Ley 21.719 ARCO Right-to-Erasure (`delete_by_titular_rut`).
     """
 
     def __init__(self, embedder: EmbeddingProviderPort | None = None) -> None:
         self.embedder = embedder or LocalHybridSemanticEmbedder()
+        self.reranker = EnterpriseCrossEncoderReranker()
         # Departmental collections: {"col_salud_siniestros": {chunk_id: DocumentChunk}}
         self._collections: dict[str, dict[str, DocumentChunk]] = {}
         self._chroma_client: Any = None
@@ -107,7 +110,7 @@ class PermissionAwareVectorStore(VectorStorePort):
         query_vec = self.embedder.embed_text(query)
 
         authorized_collections = [self._collection_name(d) for d in user.allowed_departments]
-        scored_allowed: list[DocumentChunk] = []
+        allowed_candidates: list[tuple[DocumentChunk, float, float]] = []
         blocked_preview: list[dict[str, str]] = []
         total_semantic_candidates = 0
 
@@ -140,7 +143,7 @@ class PermissionAwareVectorStore(VectorStorePort):
                         created_at=chunk.created_at,
                         score=combined_score,
                     )
-                    scored_allowed.append(candidate_copy)
+                    allowed_candidates.append((candidate_copy, sem_score, lex_score))
                 else:
                     # Blocked at retrieval layer! Record only non-sensitive metadata for audit trail
                     blocked_preview.append(
@@ -153,9 +156,14 @@ class PermissionAwareVectorStore(VectorStorePort):
                         }
                     )
 
-        scored_allowed.sort(key=lambda c: c.score, reverse=True)
+        # STAGE 2: Apply Reciprocal Rank Fusion (RRF) & Cross-Encoder Re-Ranking on authorized chunks
+        reranked_allowed = self.reranker.rerank_candidates(
+            query=query,
+            candidates=allowed_candidates,
+            top_k=top_k,
+        )
         return RetrievalResult(
-            allowed_chunks=scored_allowed[:top_k],
+            allowed_chunks=reranked_allowed,
             applied_where_filter=where_filter,
             collections_searched=authorized_collections,
             total_candidates_before_rbac=total_semantic_candidates,

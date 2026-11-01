@@ -108,4 +108,8 @@ def create_fastapi_app(controller: EnterpriseAPIController | None = None) -> Any
     def export_report() -> dict[str, Any]:
         return ctrl.export_grc_report()
 
+    @app.post("/api/v1/mcp/rpc")
+    def mcp_rpc(body: dict[str, Any], token: str = Depends(extract_bearer_token)) -> dict[str, Any]:
+        return ctrl.handle_mcp_rpc(token=token, body=body)
+
     return app
